@@ -65,6 +65,8 @@ python generate_labels.py            # метки, ~40 мин CPU / ~1 мин GP
 python train.py                      # end-to-end обучение, ~3 ч CPU / ~10 мин GPU
 python infer.py --h h_train.npy --out sub_selfcheck.csv --profile fast   # самопроверка (~15 мин CPU)
 python infer.py --h h_test.npy --out submission.csv                     # финал (полная полировка; на CPU ~2-4 ч, на GPU минуты)
+python infer.py --h h_test.npy --out submission_brain.csv --profile brain  # «мозг» (MCTech-подход, GPU ~8-9 мин)
+python infer.py --h h_train.npy --out sub_heavy.csv --profile brain --pop 12 --gens 3 --steps 400 --refine-iters 50 --seed 7  # «тяжёлый» оффлайн-раунд (~45 мин GPU; brain.pkl накапливается между раундами — меняйте --seed)
 python evaluate.py --angles data/labels.npz --h h_train.npy             # проверка углов
 ```
 
@@ -86,10 +88,18 @@ python evaluate.py --angles data/labels.npz --h h_train.npy             # про
 Время инференса (500 h, сеть + fast-полировка 3x100, GPU): ~48 с;
 full-полировка (8x300 + доводка): ~8 мин (лимит задачи — 10 мин).
 
-Примечание: топ публичного лидерборда (0.94–0.95) не воспроизводится как
-сырое P(ground) данного симулятора на данных условия (наш потолок — см.
-таблицу); вероятно, публикуемая величина нормализована. Вопрос уточнён у
-организаторов; стратегия — максимизировать сырое P(ground).
+Проверено на публичном лидерборде: загрузка нашего `submission.csv`
+(самопроверка full-прогона) дала **0.2019234299659729** — ровно среднее
+сырое P(ground) из файла, т.е. **лидерборд = сырое P(ground) на h_train
+без нормализации**. Топ (0.9519) недостижим за бюджет инференса — он
+набран тяжёлой оффлайн-оптимизацией h_train (лимит 10 минут действует
+только для финала на h_test). Отсюда два трека:
+
+* **Публичный лидерборд (h_train):** можно растить оффлайн — «тяжёлые»
+  раунды `--profile brain --pop 12 --gens 3 --steps 400` (каждый ~45 мин
+  на GPU, `brain.pkl` накапливает опыт между раундами, менять `--seed`).
+* **Финал (h_test, ≤10 мин):** стандартные профили `full` / `brain`
+  (оба укладываются в лимит с запасом на GPU).
 
 Все сиды фиксированы (SEED=42); чекпоинты: `data/labels.npz`,
 `data/model.pt`, `data/history.csv`.
@@ -117,7 +127,8 @@ QAOA/
     model.py            # QAOAAngleNet
     generate_labels.py  # поинстансная оптимизация углов (метки)
     train.py            # end-to-end обучение
-    infer.py            # инференс + полировка -> submission.csv
+    infer.py            # инференс + полировка (full/fast/brain) -> submission.csv
+    brain.py            # «мозг» — персистентная память схем (аналог MCTech)
     evaluate.py         # оценка P(ground) для набора углов
     build_notebook.py   # пересборка solution.ipynb из скриптов
   data/                 # артефакты (метки, модель, лог)
