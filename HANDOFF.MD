@@ -3,19 +3,21 @@
 > Прочти это ПОЛНОСТЬЮ перед началом. Это сжатая память предыдущих сессий:
 > задача, текущее состояние, план, грабли.
 
-## СРОЧНО: состояние гита на конец сессии 14.09.2026 (23:50 UTC)
+## Состояние гита на конец сессии 14.09.2026 (~23:55 UTC)
 
-* Ветка `arena/01a0a212-qaoa`. В `origin` успели уйти 4 коммита:
-  `a98f4d5` (код: бюджет/keep-best/chunk/новые скрипты), `1fb8558` (ноутбук),
-  `264b127` (презентация), `fec0c77` (замер эквивалентности chunk).
-* **Последний коммит НЕ запушен**: `submission.csv` = 0.2067056957622990 +
-  README/HANDOFF/results.json/presentation.pdf. Причина — токен GitHub истёк
-  посередине сессии: `gh auth status` -> "token is no longer valid",
-  `git push` -> "could not read Username for 'https://github.com'".
-  Пользователю сказано переподключить GitHub в Arena. **Первым делом в новой
-  сессии:** `git push origin arena/01a0a212-qaoa`, затем открыть PR
-  `arena/01a0a212-qaoa -> main` (готовый текст: `data/pr_body.md` в workspace;
-  если workspace обнулили — собирается из сообщений этих пяти коммитов).
+* Ветка `arena/01a0a212-qaoa`; в `origin` запушены ВСЕ коммиты сессии:
+  `a98f4d5` (код: --time-budget, keep-best у L-BFGS, --chunk, новые скрипты),
+  `1fb8558` (ноутбук), `264b127` (презентация), `fec0c77` (замер
+  эквивалентности --chunk), `31f2869` (submission.csv = 0.2067056957622990 +
+  README/HANDOFF/results.json/presentation.pdf).
+* **Открыт PR #3**: https://github.com/overbaffe1/QAOA/pull/3
+  (`arena/01a0a212-qaoa` -> `main`); текст PR — `data/pr_body.md`.
+  После мерджа сессия закрывается (пуш больше невозможен) — это нормально.
+* Грабли: посередине сессии токен GitHub минут на 10 становился невалидным
+  (`gh auth status`: "token is no longer valid", `git push`: "could not read
+  Username for 'https://github.com'"), потом ожил сам и пуш прошёл. Если push
+  упал по auth — не паниковать и не терять коммиты: повторить через пару
+  минут, и только потом просить пользователя переподключить GitHub в Arena.
 * Всё посчитанное лежит в workspace: `data/labels.npz` (0.2065),
   `data/submission_labels_polished.csv` (0.2067), `data/labels_log.txt`,
   `data/pr_body.md`. `data/` в гит не попадает, но переживает снапшоты.
