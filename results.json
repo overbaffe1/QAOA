@@ -1,0 +1,9 @@
+{
+  "label_mean": 0.2063,
+  "label_median": 0.1813,
+  "net_val": 0.1972,
+  "net_val_polished": 0.2093,
+  "selfcheck_net": 0.1890,
+  "selfcheck_polished": 0.2010,
+  "time_infer": 48
+}
