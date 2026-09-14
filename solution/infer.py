@@ -29,6 +29,8 @@ from features import build_features  # noqa: E402
 from model import QAOAAngleNet  # noqa: E402
 from QAOA import QAOA  # noqa: E402
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -43,17 +45,18 @@ def main():
     h = np.load(h_path)
 
     J = np.load(os.path.join(ROOT, "J.npy"))
-    qaoa = QAOA(J)
+    qaoa = QAOA(J, device=DEVICE)
     X, _ = build_features(J, h)
 
     ckpt = torch.load(os.path.join(DATA, "model.pt"), map_location="cpu",
                       weights_only=True)
-    net = QAOAAngleNet(in_dim=ckpt["in_dim"])
+    net = QAOAAngleNet(in_dim=ckpt["in_dim"]).to(DEVICE)
     net.load_state_dict(ckpt["state_dict"])
     net.eval()
 
-    xt = torch.tensor(X, dtype=torch.float32)
-    ht = torch.tensor(h, dtype=torch.float32)
+    xt = torch.tensor(X, dtype=torch.float32, device=DEVICE)
+    ht = torch.tensor(h, dtype=torch.float32, device=DEVICE)
+    print(f"device: {DEVICE}")
 
     with torch.no_grad():
         g0, b0 = net.angles(xt)
@@ -80,7 +83,7 @@ def main():
     print(f"P(ground) после полировки ({args.polish} шагов): {p_after:.4f} "
           f"({dt:.1f} c)")
 
-    g_np, b_np = g.detach().numpy(), b.detach().numpy()
+    g_np, b_np = g.detach().cpu().numpy(), b.detach().cpu().numpy()
     assert len(np.unique(g_np, axis=0)) > 1, "углы должны зависеть от h"
     cols = (["id"] + [f"gamma_{k}" for k in range(5)]
             + [f"beta_{k}" for k in range(5)])

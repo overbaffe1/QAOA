@@ -35,6 +35,8 @@ from features import build_features  # noqa: E402
 from model import QAOAAngleNet  # noqa: E402
 from QAOA import QAOA  # noqa: E402
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 def polish(qaoa, h, g0, b0, steps=30, lr=0.05):
     """Короткая поинстансная доводка углов от начального приближения."""
@@ -54,7 +56,8 @@ def main():
     np.random.seed(SEED)
     J = np.load(os.path.join(ROOT, "J.npy"))
     h_all = np.load(os.path.join(ROOT, "h_train.npy"))
-    qaoa = QAOA(J)
+    qaoa = QAOA(J, device=DEVICE)
+    print(f"device: {DEVICE}")
 
     # ---------- разбиение и синтетика ----------
     idx = np.arange(len(h_all))
@@ -71,17 +74,17 @@ def main():
     X_tr, gs_tr = build_features(J, h_tr)
     X_val, gs_val = build_features(J, h_val)
 
-    Xt = torch.tensor(X_tr, dtype=torch.float32)
-    htr = torch.tensor(h_tr, dtype=torch.float32)
-    Xv = torch.tensor(X_val, dtype=torch.float32)
-    hval = torch.tensor(h_val, dtype=torch.float32)
-    emin_tr = torch.tensor(gs_tr["Emin"].reshape(-1, 1), dtype=torch.float32)
-    sstar_tr = torch.tensor((gs_tr["s_star"] + 1) / 2, dtype=torch.float32)
-    emin_val = torch.tensor(gs_val["Emin"].reshape(-1, 1), dtype=torch.float32)
-    sstar_val = torch.tensor((gs_val["s_star"] + 1) / 2, dtype=torch.float32)
+    Xt = torch.tensor(X_tr, dtype=torch.float32, device=DEVICE)
+    htr = torch.tensor(h_tr, dtype=torch.float32, device=DEVICE)
+    Xv = torch.tensor(X_val, dtype=torch.float32, device=DEVICE)
+    hval = torch.tensor(h_val, dtype=torch.float32, device=DEVICE)
+    emin_tr = torch.tensor(gs_tr["Emin"].reshape(-1, 1), dtype=torch.float32, device=DEVICE)
+    sstar_tr = torch.tensor((gs_tr["s_star"] + 1) / 2, dtype=torch.float32, device=DEVICE)
+    emin_val = torch.tensor(gs_val["Emin"].reshape(-1, 1), dtype=torch.float32, device=DEVICE)
+    sstar_val = torch.tensor((gs_val["s_star"] + 1) / 2, dtype=torch.float32, device=DEVICE)
 
     # ---------- сеть (инициализация голов углов по меткам) ----------
-    net = QAOAAngleNet(in_dim=Xt.shape[1])
+    net = QAOAAngleNet(in_dim=Xt.shape[1]).to(DEVICE)
     labels_path = os.path.join(DATA, "labels.npz")
     if os.path.exists(labels_path):
         lab = np.load(labels_path)

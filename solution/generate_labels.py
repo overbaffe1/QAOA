@@ -27,17 +27,18 @@ from config import DATA, LABEL_LR, ROOT  # noqa: E402
 from QAOA import QAOA  # noqa: E402
 
 P = 5
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def run(steps=250, restarts=3, lr=LABEL_LR, seed=42):
+def run(steps=250, restarts=3, lr=LABEL_LR, seed=42, device=DEVICE):
     torch.manual_seed(seed)
     np.random.seed(seed)
     J = np.load(os.path.join(ROOT, "J.npy"))
     h = np.load(os.path.join(ROOT, "h_train.npy"))
-    qaoa = QAOA(J)
+    qaoa = QAOA(J, device=device)
 
     B = len(h)
-    ht = torch.tensor(h, dtype=torch.float32)
+    ht = torch.tensor(h, dtype=torch.float32, device=device)
     ckpt = os.path.join(DATA, "labels.npz")
 
     best_g = np.zeros((B, P))
@@ -59,7 +60,7 @@ def run(steps=250, restarts=3, lr=LABEL_LR, seed=42):
                       f"mean P(ground) = {-loss.item():.4f}", flush=True)
 
         with torch.no_grad():
-            p = qaoa.p_ground(ht, g, b).numpy()
+            p = qaoa.p_ground(ht, g, b).cpu().numpy()
         upd = p > best_p
         if r == 0:
             best_g, best_b = g.detach().numpy().copy(), b.detach().numpy().copy()
