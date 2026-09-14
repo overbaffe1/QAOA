@@ -265,7 +265,9 @@ pdf.bullets([
 # ---- 9. результаты ----
 new_slide(pdf, 8, "Результаты")
 rows = [
-    ("полная поинстансная оптимизация (потолок)", fmt("label_mean"), fmt("label_median")),
+    ("полная поинстансная оптимизация (потолок, GPU)", fmt("label_mean"), fmt("label_median")),
+    ("то же на CPU кусками по 64 (--chunk 64)", fmt("label_mean_cpu"), fmt("label_median_cpu")),
+    ("посылка в репозитории: метки + L-BFGS 50", fmt("submission_repo", 6), fmt("submission_repo_median")),
     ("сеть (чистая, без полировки), holdout+synth", fmt("net_val"), ""),
     ("сеть + полировка, 50 реальных (holdout)", fmt("net_val_polished"), ""),
     ("самопроверка на h_train: сеть / сеть+полировка", fmt("selfcheck_net"), fmt("selfcheck_polished")),

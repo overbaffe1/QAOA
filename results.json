@@ -1,10 +1,15 @@
 {
   "label_mean": 0.2063,
+  "label_mean_cpu": 0.2065,
   "label_median": 0.1813,
+  "label_median_cpu": 0.1817,
   "leaderboard": 0.2019234299659729,
   "net_val": 0.1972,
   "net_val_polished": 0.2093,
   "selfcheck_net": 0.189,
   "selfcheck_polished": 0.201,
-  "time_infer": 48
+  "submission_repo": 0.206705695762299,
+  "submission_repo_median": 0.1817,
+  "time_infer": 48,
+  "time_polish_csv_cpu": 43
 }
