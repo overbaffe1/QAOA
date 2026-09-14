@@ -1,0 +1,7 @@
+# Python 3.10+
+numpy>=1.24
+torch>=2.0
+
+# Для CPU-установки torch без CUDA-зависимостей:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# В Google Colab torch (с CUDA) уже установлен.
