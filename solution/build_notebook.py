@@ -140,7 +140,8 @@ ROOT = "."                 # J.npy / h_train.npy в рабочей папке
 N_SYNTH_TRAIN, N_SYNTH_VAL, N_VAL_REAL = 1000, 500, 50
 BATCH, STEPS, LR, AUX_W = 128, 12000, 1e-3, 0.05
 LABEL_STEPS, LABEL_RESTARTS, LABEL_LR = 250, 3, 0.05
-POLISH_STEPS, POLISH_LR = 40, 0.05
+POLISH_RESTARTS, POLISH_STEPS = 8, 300
+POLISH_FINE_STEPS, POLISH_FINE_LR, POLISH_LR = 100, 0.01, 0.05
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print("device:", DEVICE)
 """))
@@ -171,10 +172,34 @@ else:
     cells.append(code(labels_src))
     cells.append(code(train_src))
 
-    cells.append(code("""# --- инференс: сеть + полировка -> submission.csv ---
+    cells.append(code("""# --- инференс: сеть + СИЛЬНАЯ полировка -> submission.csv ---
 import time
 
-def make_angles(h, polish_steps=POLISH_STEPS):
+def run_restart(qaoa, ht, g, b, steps, lr, fine_steps, fine_lr, tag):
+    g = g.detach().clone().requires_grad_(True)
+    b = b.detach().clone().requires_grad_(True)
+    opt = torch.optim.Adam([g, b], lr=lr)
+    for s in range(steps):
+        opt.zero_grad()
+        loss = -qaoa.p_ground(ht, g, b).mean()
+        loss.backward()
+        opt.step()
+    if fine_steps:
+        opt = torch.optim.Adam([g, b], lr=fine_lr)
+        for s in range(fine_steps):
+            opt.zero_grad()
+            loss = -qaoa.p_ground(ht, g, b).mean()
+            loss.backward()
+            opt.step()
+    with torch.no_grad():
+        p = qaoa.p_ground(ht, g, b)
+    print(f"{tag}: mean P(ground) = {p.mean().item():.4f}", flush=True)
+    return g.detach(), b.detach(), p
+
+def make_angles(h, restarts=POLISH_RESTARTS):
+    # Сеть -> много-рестарт полировка (best-of по P(ground)):
+    # рестарт 0 — сеть, 1 — сеть+шум, остальные — случайные (полный диапазон).
+    # На GPU Colab: ~2-5 мин на 500 инстансов (лимит 10 мин).
     X, _ = build_features(J, h)
     ckpt = torch.load(os.path.join(DATA, "model.pt"), map_location="cpu",
                       weights_only=True)
@@ -183,28 +208,41 @@ def make_angles(h, polish_steps=POLISH_STEPS):
     net.to(DEVICE)
     net.eval()
 
+    B = len(h)
     ht = torch.tensor(h, dtype=torch.float32, device=DEVICE)
     xt = torch.tensor(X, dtype=torch.float32, device=DEVICE)
     qaoa_dev = QAOA(J, device=DEVICE)
+    torch.manual_seed(SEED)
     with torch.no_grad():
         g0, b0 = net.angles(xt)
         p_before = qaoa_dev.p_ground(ht, g0, b0).mean().item()
-    print(f"P(ground) чистой сети: {p_before:.4f}")
+    print(f"P(ground) чистой сети (без полировки): {p_before:.4f}")
 
-    g = g0.detach().clone().requires_grad_(True)
-    b = b0.detach().clone().requires_grad_(True)
-    opt = torch.optim.Adam([g, b], lr=POLISH_LR)
+    best_g, best_b, best_p = g0, b0, -torch.ones(B, device=DEVICE)
     t0 = time.time()
-    for step in range(polish_steps):
-        opt.zero_grad()
-        loss = -qaoa_dev.p_ground(ht, g, b).mean()
-        loss.backward()
-        opt.step()
+    for r in range(restarts):
+        if r == 0:
+            g, b = g0, b0
+        elif r == 1:
+            g = g0 + 0.3 * torch.randn_like(g0)
+            b = b0 + 0.3 * torch.randn_like(b0)
+        else:
+            g = torch.rand(B, P, device=DEVICE) * 2 * np.pi
+            b = torch.rand(B, P, device=DEVICE) * np.pi
+        gs, bs, p = run_restart(qaoa_dev, ht, g, b, POLISH_STEPS, POLISH_LR,
+                                POLISH_FINE_STEPS, POLISH_FINE_LR,
+                                f"рестарт {r + 1}/{restarts}")
+        upd = (p > best_p).unsqueeze(1)
+        best_g = torch.where(upd, gs, best_g)
+        best_b = torch.where(upd, bs, best_b)
+        best_p = torch.maximum(p, best_p)
+        print(f"  -> best-of mean P(ground) = {best_p.mean().item():.4f}",
+              flush=True)
     with torch.no_grad():
-        p_after = qaoa_dev.p_ground(ht, g, b).mean().item()
-    print(f"P(ground) после полировки ({polish_steps} шагов): {p_after:.4f} "
-          f"({time.time() - t0:.1f} c, лимит 600 c)")
-    return g.detach().cpu().numpy(), b.detach().cpu().numpy()
+        p_after = qaoa_dev.p_ground(ht, best_g, best_b).mean().item()
+    print(f"P(ground) после полировки: {p_after:.4f} "
+          f"(сеть давала {p_before:.4f}) — {time.time() - t0:.0f} c, лимит 600 c")
+    return best_g.cpu().numpy(), best_b.cpu().numpy()
 
 
 if h_test is not None:

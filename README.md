@@ -35,9 +35,13 @@
    `-mean P(ground)(h, f(h)) + 0.05·aux`. Данные: 450 реальных + 1000
    синтетических `h ~ U[-1,1]^12`; валидация: 50 реальных (holdout) +
    500 синтетических. Головы углов инициализированы средними метками.
-5. **Инференс.** `f(h)` + **полировка**: 40 шагов Adam поинстансно от
-   предсказания сети. Тысячи запусков схемы → десятки; ~2-3 мин на CPU
-   (лимит 10 мин), секунды на GPU.
+5. **Инференс — «тёплый старт + сильная полировка».** `f(h)` даёт стартовые
+   углы, затем **поинстансная много-рестарт оптимизация** (батч = все 500):
+   рестарт 0 — предсказание сети, рестарт 1 — сеть + шум, остальные —
+   случайные в полном диапазоне; 300 шагов Adam + доводка мелким lr;
+   для каждого инстанса оставляем лучший набор углов по P(ground).
+   Тысячи итераций классического цикла QAOA → десятки; на GPU (Colab)
+   ~2-5 мин на 500 инстансов (лимит — 10 мин).
 
 ## Запуск
 
@@ -57,11 +61,16 @@
 pip install -r requirements.txt
 cd solution
 
-python generate_labels.py            # метки, ~15-20 мин CPU / ~1 мин GPU
-python train.py                      # end-to-end обучение, ~1.5 ч CPU / ~10 мин GPU
-python infer.py --h h_test.npy --out submission.csv   # инференс + полировка
-python evaluate.py --angles data/labels.npz --h h_train.npy  # проверка углов
+python generate_labels.py            # метки, ~40 мин CPU / ~1 мин GPU
+python train.py                      # end-to-end обучение, ~3 ч CPU / ~10 мин GPU
+python infer.py --h h_train.npy --out sub_selfcheck.csv --profile fast   # самопроверка (~15 мин CPU)
+python infer.py --h h_test.npy --out submission.csv                     # финал (полная полировка; на CPU ~2-4 ч, на GPU минуты)
+python evaluate.py --angles data/labels.npz --h h_train.npy             # проверка углов
 ```
+
+> **Совет:** финальный `infer.py` с `--profile full` на CPU занимает часы —
+> для посылки запускайте его в Google Colab (ноутбук `solution.ipynb`),
+> где на GPU весь прогон занимает ~10-15 минут.
 
 ## Результаты
 
