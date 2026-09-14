@@ -179,8 +179,8 @@ def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
         print(f"  -> best-of mean P(ground) = {best_fit.mean():.4f}",
               flush=True)
         order = np.argsort(-fit, axis=0)
-        t1 = np.stack([opt10[order[i, 0]][i] for i in range(B)])
-        t2 = np.stack([opt10[order[i, 1]][i] for i in range(B)])
+        t1 = np.stack([opt10[c][i] for i, c in enumerate(order[0])])
+        t2 = np.stack([opt10[c][i] for i, c in enumerate(order[1])])
         nxt = [t1, t2,                       # элитизм: лучшие выживают
                brain.mutate(t1, rng, 0.15),
                brain.mutate(t2, rng, 0.15),
