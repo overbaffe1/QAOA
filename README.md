@@ -62,17 +62,49 @@ pip install -r requirements.txt
 cd solution
 
 python generate_labels.py            # метки, ~40 мин CPU / ~1 мин GPU
+python generate_labels.py --chunk 64 # то же, но кусками по 64 инстанса:
+                                     # нужно, если RAM < 4 ГБ (батч 500 на
+                                     # backward требует >3 ГБ и убивается OOM)
 python train.py                      # end-to-end обучение, ~3 ч CPU / ~10 мин GPU
 python infer.py --h h_train.npy --out sub_selfcheck.csv --profile fast   # самопроверка (~15 мин CPU)
-python infer.py --h h_test.npy --out submission.csv                     # финал (полная полировка; на CPU ~2-4 ч, на GPU минуты)
-python infer.py --h h_test.npy --out submission_brain.csv --profile brain  # «мозг» (MCTech-подход, GPU ~8-9 мин)
-python infer.py --h h_train.npy --out sub_heavy.csv --profile brain --pop 12 --gens 3 --steps 400 --refine-iters 50 --seed 7  # «тяжёлый» оффлайн-раунд (~45 мин GPU; brain.pkl накапливается между раундами — меняйте --seed)
-python evaluate.py --angles data/labels.npz --h h_train.npy             # проверка углов
+python infer.py --h h_test.npy --out submission.csv --time-budget 520    # финал (full; страховка от лимита 600 с)
+python infer.py --h h_test.npy --out submission_brain.csv --profile brain --time-budget 520  # «мозг» (MCTech-подход, GPU ~8-9 мин)
+python heavy_rounds.py --rounds 3 --start-seed 7                         # тяжёлые оффлайн-раунды на h_train
+python polish_csv.py --csv ../submission.csv --h ../h_train.npy --out ../submission_polished.csv --refine-iters 50
+python evaluate.py --angles data/labels.npz --h h_train.npy             # проверка углов из npz
+python evaluate.py --csv ../submission.csv --h h_train.npy              # проверка готовой посылки (= число на лидерборде)
 ```
 
 > **Совет:** финальный `infer.py` с `--profile full` на CPU занимает часы —
 > для посылки запускайте его в Google Colab (ноутбук `solution.ipynb`),
 > где на GPU весь прогон занимает ~10-15 минут.
+
+### Инструменты финального дня
+
+* `heavy_rounds.py` — несколько тяжёлых раундов `brain` подряд (сиды
+  `--start-seed`, `--rounds`): сам пишет логи, оценивает каждый CSV сырым
+  средним P(ground), копирует лучший в `submission_best.csv`, переживает
+  Ctrl-C, `--skip-existing` не перезапускает уже готовые раунды.
+  `data/brain.pkl` накапливается между раундами — каждый следующий стартует
+  умнее. Лимит 10 минут на лидерборде не действует, поэтому бюджет можно
+  не ставить.
+* `polish_csv.py` — доводка ГОТОВОЙ посылки (per-instance L-BFGS, опционально
+  батчевый Adam `--fine`). Угол принимается только если P(ground) не стал
+  хуже, поэтому испортить посылку нельзя. Работает на CPU (один инстанс
+  за раз): ~5-10 мин на 500 инстансов при `--refine-iters 50`.
+* `--time-budget N` у `infer.py` / `polish_csv.py` — жёсткий бюджет секунд:
+  этап, который не успевает, не начинается, поинстансная доводка прерывается
+  на текущем инстансе, CSV записывается всегда. Для h_test ставьте 520
+  (600 с лимита минус загрузка модели/признаков и запас).
+
+> **Важно про `submission.csv` в репозитории.** Раньше в гите лежал
+> файл-заглушка (случайные углы, P(ground) = 0.0021), хотя на лидерборд
+> загружался другой CSV (0.2019234299659729) с локальной машины. Распаковка
+> ZIP из GitHub поверх рабочей папки молча подменяла хорошую посылку
+> заглушкой. Теперь в репозитории лежит настоящая посылка (см. «Результаты»),
+> но правило остаётся: перед загрузкой на платформу сверяйте файл —
+> `python solution/evaluate.py --csv submission.csv --h h_train.npy` должно
+> печатать то же число, что и лидерборд.
 
 ## Результаты
 

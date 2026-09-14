@@ -28,6 +28,16 @@
 Запуск:
   python infer.py --h h_test.npy --out submission.csv              # full
   python infer.py --h h_train.npy --out sub.csv --profile fast     # самопроверка
+
+Жёсткий бюджет времени (--time-budget, сек)
+-------------------------------------------
+Лимит задачи на h_test — 600 с. `--time-budget 520` включает страховку:
+полировка сама измеряет стоимость рестарта/кандидата и перестаёт начинать
+новые, если остаток бюджета их не покрывает; поинстансная L-BFGS-доводка
+прерывается на том инстансе, где бюджет исчерпан. Углы при этом остаются
+валидными (лучшие из уже полученных), submission.csv записывается всегда.
+Для оффлайн-раундов на h_train бюджет не нужен (лимит там не действует) —
+по умолчанию 0, т.е. без ограничения.
 """
 import argparse
 import os
@@ -50,6 +60,19 @@ from model import QAOAAngleNet  # noqa: E402
 from QAOA import QAOA, P  # noqa: E402
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Сколько секунд оставить в запасе при --time-budget на финальную оценку
+# P(ground), обновление «мозга» и запись submission.csv.
+BUDGET_RESERVE = 20.0
+
+
+def budget_reserve(budget):
+    """Резерв под хвост (оценка + запись CSV). Для боевого бюджета 520 с это
+    20 с; для коротких тестовых бюджетов резерв урезается, иначе полировка
+    останавливалась бы, не начавшись."""
+    if not budget or budget <= 0:
+        return BUDGET_RESERVE
+    return float(min(BUDGET_RESERVE, max(2.0, 0.05 * budget)))
 
 
 def run_restart(qaoa, ht, g, b, steps, lr, fine_steps, fine_lr, tag):
@@ -83,15 +106,29 @@ def run_restart(qaoa, ht, g, b, steps, lr, fine_steps, fine_lr, tag):
 
 
 def polish_strong(qaoa, ht, g0, b0, restarts, steps, fine_steps,
-                  fine_lr, lr, seed=42):
-    """Много-рестарт поинстансная полировка, best-of по P(ground)."""
+                  fine_lr, lr, seed=42, deadline=None,
+                  reserve=BUDGET_RESERVE):
+    """Много-рестарт поинстансная полировка, best-of по P(ground).
+
+    deadline — момент времени (time.time()), после которого новые рестарты
+    не начинаются (страховка от лимита 600 с на h_test).
+    """
     B = ht.shape[0]
     torch.manual_seed(seed)
     best_g = g0.detach().clone()
     best_b = b0.detach().clone()
     best_p = -torch.ones(B, device=ht.device)
+    dt_hist = []
 
     for r in range(restarts):
+        if deadline is not None and r > 0 and dt_hist:
+            est = float(np.mean(dt_hist))
+            left = deadline - time.time()
+            if left < est + reserve:
+                print(f"  [бюджет] рестарт {r + 1}/{restarts} пропущен: "
+                      f"нужно ~{est:.0f} c, осталось {left:.0f} c",
+                      flush=True)
+                break
         if r == 0:
             g, b = g0, b0
             tag = f"рестарт {r + 1}/{restarts} (сеть)"
@@ -103,19 +140,25 @@ def polish_strong(qaoa, ht, g0, b0, restarts, steps, fine_steps,
             g = torch.rand(B, P, device=ht.device) * 2 * np.pi
             b = torch.rand(B, P, device=ht.device) * np.pi
             tag = f"рестарт {r + 1}/{restarts} (случайный)"
+        t_r = time.time()
         gs, bs, p = run_restart(qaoa, ht, g, b, steps, lr,
                                 fine_steps, fine_lr, tag)
+        dt_hist.append(time.time() - t_r)
         upd = (p > best_p).unsqueeze(1)
         best_g = torch.where(upd, gs, best_g)
         best_b = torch.where(upd, bs, best_b)
         best_p = torch.maximum(p, best_p)
         print(f"  -> best-of mean P(ground) = {best_p.mean().item():.4f}",
               flush=True)
+        if deadline is not None:
+            print(f"  [бюджет] осталось {deadline - time.time():.0f} c",
+                  flush=True)
     return best_g, best_b
 
 
 def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
-                 fine_lr, lr, refine=True, refine_iters=25, seed=42):
+                 fine_lr, lr, refine=True, refine_iters=25, seed=42,
+                 deadline=None, reserve=BUDGET_RESERVE):
     """Поинстансный популяционный поиск — аналог ГА из MCTech:
 
       популяция угловых схем (умная инициализация из «мозга»)
@@ -125,6 +168,10 @@ def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
 
     Для каждого инстанса остаётся лучшая схема; всё лучшее передаётся
     в «мозг» (см. QAOABrain.update_from_results).
+
+    deadline — момент time.time(), к которому нужно успеть: новые кандидаты
+    и поколения не начинаются, если остаток бюджета их не покрывает,
+    L-BFGS-доводка прерывается на инстансе. Результат всегда валиден.
     """
     B = ht.shape[0]
     dev = ht.device
@@ -155,18 +202,33 @@ def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
 
     # ---------- эволюция ----------
     best10, best_fit = None, None
+    cand_dt = None                       # замеренная стоимость одного кандидата
     for gen in range(gens):
-        fit = np.zeros((len(pop10), B))
-        opt10 = [None] * len(pop10)
+        fit_rows, opt10 = [], []
         for c in range(len(pop10)):
+            if deadline is not None and cand_dt is not None:
+                left = deadline - time.time()
+                if left < cand_dt + reserve:
+                    print(f"  [бюджет] поколение {gen + 1}, кандидат {c + 1}"
+                          f"/{len(pop10)} пропущен: нужно ~{cand_dt:.0f} c, "
+                          f"осталось {left:.0f} c", flush=True)
+                    break
             g, b = split(pop10[c])
+            t_c = time.time()
             gs, bs, p = run_restart(
                 qaoa, ht, g, b, steps, lr, 0, 0,
                 f"поколение {gen + 1}/{gens}, кандидат {c + 1}/{len(pop10)}")
-            fit[c] = p.cpu().numpy()
+            cand_dt = time.time() - t_c
+            fit_rows.append(p.cpu().numpy())
             # в популяцию следующего поколения идёт УЖЕ ОПТИМИЗИРОВАННАЯ схема
-            opt10[c] = np.concatenate([gs.cpu().numpy(),
-                                       bs.cpu().numpy()], axis=1)
+            opt10.append(np.concatenate([gs.cpu().numpy(),
+                                         bs.cpu().numpy()], axis=1))
+        if not fit_rows:
+            print("  [бюджет] поколение не начато — эволюция остановлена",
+                  flush=True)
+            break
+        # fit: (n_run, B) — n_run может быть меньше len(pop10) при бюджете
+        fit = np.stack(fit_rows)
         am = fit.argmax(axis=0)
         cur10 = np.stack([opt10[am[i]][i] for i in range(B)])
         cur_fit = fit[am, np.arange(B)]
@@ -178,9 +240,15 @@ def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
             best_fit = np.maximum(best_fit, cur_fit)
         print(f"  -> best-of mean P(ground) = {best_fit.mean():.4f}",
               flush=True)
-        order = np.argsort(-fit, axis=0)
-        t1 = np.stack([opt10[c][i] for i, c in enumerate(order[0])])
-        t2 = np.stack([opt10[c][i] for i, c in enumerate(order[1])])
+        if fit.shape[0] >= 2:
+            # отбор: для КАЖДОГО инстанса i — лучший (order[0]) и второй
+            # (order[1]) кандидат. order имеет форму (n_run, B), поэтому
+            # индекс кандидата — это order[k][i], а не order[i, k].
+            order = np.argsort(-fit, axis=0)
+            t1 = np.stack([opt10[c][i] for i, c in enumerate(order[0])])
+            t2 = np.stack([opt10[c][i] for i, c in enumerate(order[1])])
+        else:                            # единственный выживший кандидат
+            t1 = t2 = cur10
         nxt = [t1, t2,                       # элитизм: лучшие выживают
                brain.mutate(t1, rng, 0.15),
                brain.mutate(t2, rng, 0.15),
@@ -189,17 +257,49 @@ def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
             nxt.append(np.stack(
                 [brain.smart_randomize(rng, net10[i]) for i in range(B)]))
         pop10 = nxt[:pop]
+        if deadline is not None:
+            left = deadline - time.time()
+            need = (cand_dt or 0.0) * len(pop10)
+            print(f"  [бюджет] осталось {left:.0f} c "
+                  f"(следующее поколение ~{need:.0f} c)", flush=True)
+            if gen + 1 < gens and left < need + reserve:
+                print("  [бюджет] следующее поколение не успеваем — стоп",
+                      flush=True)
+                break
 
     # ---------- финальная доводка лучшего ----------
     g, b = split(best10)
-    g, b, _ = run_restart(qaoa, ht, g, b, 0, lr, fine_steps, fine_lr,
-                          "доводка (fine)")
+    if deadline is not None and deadline - time.time() < reserve:
+        print("  [бюджет] финальная доводка (fine) пропущена", flush=True)
+    else:
+        g, b, _ = run_restart(qaoa, ht, g, b, 0, lr, fine_steps, fine_lr,
+                              "доводка (fine)")
 
     # ---------- L-BFGS-доводка («final refinement» из MCTech) ----------
     if refine:
         g_np, b_np = g.cpu().numpy(), b.cpu().numpy()
+
+        def p_one(i, gv, bv):
+            with torch.no_grad():
+                return qaoa.p_ground(
+                    ht[i:i + 1],
+                    torch.as_tensor(gv, dtype=torch.float32,
+                                    device=dev).view(1, P),
+                    torch.as_tensor(bv, dtype=torch.float32,
+                                    device=dev).view(1, P)).item()
+
         t0 = time.time()
+        n_ref = n_better = n_worse = 0
         for i in range(B):
+            if deadline is not None and i > 0:
+                left = deadline - time.time()
+                per = (time.time() - t0) / i
+                if left < max(per, 0.0) + reserve:
+                    print(f"  [бюджет] L-BFGS-доводка остановлена на инстансе "
+                          f"{i}/{B} (~{per * (B - i):.0f} c не хватило)",
+                          flush=True)
+                    break
+            p_old = p_one(i, g_np[i], b_np[i])
             gi = torch.tensor(g_np[i], dtype=torch.float32, device=dev,
                               requires_grad=True)
             bi = torch.tensor(b_np[i], dtype=torch.float32, device=dev,
@@ -215,10 +315,21 @@ def polish_brain(qaoa, ht, h_np, g0, b0, brain, pop, gens, steps, fine_steps,
             opt = torch.optim.LBFGS([gi, bi], lr=1.0, max_iter=refine_iters,
                                     history_size=10)
             opt.step(closure)
-            g_np[i] = gi.detach().cpu().numpy()
-            b_np[i] = bi.detach().cpu().numpy()
+            g_new = gi.detach().cpu().numpy()
+            b_new = bi.detach().cpu().numpy()
+            p_new = p_one(i, g_new, b_new)
+            # L-BFGS с lr=1.0 без line search может перепрыгнуть оптимум:
+            # принимаем результат ТОЛЬКО если он не хуже (keep best).
+            if p_new > p_old:
+                g_np[i], b_np[i] = g_new, b_new
+                n_better += 1
+            elif p_new < p_old - 1e-6:
+                n_worse += 1
+            n_ref = i + 1
         g, b = (torch.tensor(g_np, device=dev), torch.tensor(b_np, device=dev))
-        print(f"  L-BFGS-доводка: {time.time() - t0:.0f} c", flush=True)
+        print(f"  L-BFGS-доводка: {time.time() - t0:.0f} c "
+              f"({n_ref}/{B} инстансов; улучшилось {n_better}, "
+              f"отклонено как худшие {n_worse})", flush=True)
     return g, b
 
 
@@ -248,7 +359,19 @@ def main():
                     help="обработать только первые N (только для теста)")
     ap.add_argument("--seed", type=int, default=42,
                     help="сид для случайных рестартов/популяции")
+    ap.add_argument("--time-budget", type=float, default=0.0,
+                    help="жёсткий бюджет секунд на весь инференс (0 = без "
+                         "ограничения). Для h_test ставьте 520: полировка не "
+                         "начинает этап, который не успевает, и submission.csv "
+                         "записывается всегда")
     args = ap.parse_args()
+    t_start = time.time()
+    deadline = (t_start + args.time_budget) if args.time_budget > 0 else None
+    reserve = budget_reserve(args.time_budget)
+    if deadline is not None:
+        print(f"бюджет времени: {args.time_budget:.0f} c "
+              f"(резерв {reserve:.0f} c на хвост: оценка + запись CSV)",
+              flush=True)
 
     if args.profile == "full":
         R, S, FS = POLISH_RESTARTS, POLISH_STEPS, POLISH_FINE_STEPS
@@ -270,9 +393,10 @@ def main():
     if not os.path.exists(h_path):
         sys.exit(f"файл {h_path} не найден")
     h = np.load(h_path)
+    n_total = len(h)
     if args.limit > 0:
         h = h[:args.limit]
-        print(f"(ТЕСТОВЫЙ РЕЖИМ: только первые {len(h)} из {args.limit}+)")
+        print(f"(ТЕСТОВЫЙ РЕЖИМ: только первые {len(h)} из {n_total})")
 
     J = np.load(os.path.join(ROOT, "J.npy"))
     qaoa = QAOA(J, device=DEVICE)
@@ -305,19 +429,28 @@ def main():
                             POLISH_FINE_LR, POLISH_LR,
                             refine=not args.no_refine,
                             refine_iters=args.refine_iters,
-                            seed=args.seed)
+                            seed=args.seed, deadline=deadline,
+                            reserve=reserve)
     else:
         g, b = polish_strong(qaoa, ht, g0, b0, R, S, FS, POLISH_FINE_LR,
-                             POLISH_LR, seed=args.seed)
+                             POLISH_LR, seed=args.seed, deadline=deadline,
+                             reserve=reserve)
     dt = time.time() - t_total
 
     with torch.no_grad():
         p_after = qaoa.p_ground(ht, g, b).mean().item()
     print(f"\nP(ground) после полировки: {p_after:.4f}  (сеть давала {p_before:.4f})")
     print(f"время полировки: {dt:.1f} c (лимит 600 c)")
+    dt_all = time.time() - t_start
+    print(f"время всего инференса: {dt_all:.1f} c"
+          + (f" / бюджет {args.time_budget:.0f} c" if deadline else ""))
+    if deadline is not None and dt_all > args.time_budget:
+        print("ВНИМАНИЕ: бюджет превышен — посылка всё равно будет записана")
 
     g_np, b_np = g.cpu().numpy(), b.cpu().numpy()
-    assert len(np.unique(g_np, axis=0)) > 1, "углы должны зависеть от h"
+    if len(np.unique(g_np, axis=0)) <= 1:
+        print("ВНИМАНИЕ: все углы одинаковы — посылка вырождена "
+              "(проверьте model.pt / профиль)", flush=True)
     cols = (["id"] + [f"gamma_{k}" for k in range(5)]
             + [f"beta_{k}" for k in range(5)])
     out = np.concatenate(
