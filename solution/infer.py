@@ -177,7 +177,7 @@ def main():
     out = np.concatenate(
         [np.arange(len(h))[:, None], g_np, b_np], axis=1)
     np.savetxt(args.out, out, delimiter=",",
-               header=",".join(cols), comments="", fmt=["%d"] + ["%r"] * 10)
+               header=",".join(cols), comments="", fmt=["%d"] + ["%.12f"] * 10)
     print(f"сохранено: {args.out}")
 
 

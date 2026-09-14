@@ -252,7 +252,7 @@ if h_test is not None:
     cols = ["id"] + [f"gamma_{k}" for k in range(P)] + [f"beta_{k}" for k in range(P)]
     out = np.concatenate([np.arange(len(h_test))[:, None], g_np, b_np], axis=1)
     np.savetxt("submission.csv", out, delimiter=",", header=",".join(cols),
-               comments="", fmt=["%d"] + ["%r"] * (2 * P))
+               comments="", fmt=["%d"] + ["%.12f"] * (2 * P))
     print("сохранено submission.csv")
     print(out[:3])
 else:
