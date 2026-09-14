@@ -115,6 +115,12 @@ def main():
     ap.add_argument("--out", default="submission.csv")
     ap.add_argument("--profile", choices=["full", "fast"], default="full",
                     help="full — финальная (GPU), fast — самопроверка (CPU)")
+    ap.add_argument("--restarts", type=int, default=None,
+                    help="переопределить число рестартов (по умолчанию — из профиля)")
+    ap.add_argument("--steps", type=int, default=None,
+                    help="переопределить число шагов Adam на рестарт")
+    ap.add_argument("--fine", type=int, default=None,
+                    help="переопределить число шагов финальной доводки")
     ap.add_argument("--limit", type=int, default=0,
                     help="обработать только первые N (только для теста)")
     args = ap.parse_args()
@@ -123,8 +129,10 @@ def main():
         R, S, FS = POLISH_RESTARTS, POLISH_STEPS, POLISH_FINE_STEPS
     else:
         R, S, FS = POLISH_RESTARTS_FAST, POLISH_STEPS_FAST, POLISH_FINE_STEPS_FAST
-    print(f"profile={args.profile}: restarts={R}, steps={R and S}, "
-          f"fine={FS}")
+    R = args.restarts if args.restarts is not None else R
+    S = args.steps if args.steps is not None else S
+    FS = args.fine if args.fine is not None else FS
+    print(f"profile={args.profile}: restarts={R}, steps={S}, fine={FS}")
 
     h_path = args.h if os.path.exists(args.h) else os.path.join(ROOT, args.h)
     if not os.path.exists(h_path):

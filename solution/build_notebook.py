@@ -140,7 +140,9 @@ ROOT = "."                 # J.npy / h_train.npy в рабочей папке
 N_SYNTH_TRAIN, N_SYNTH_VAL, N_VAL_REAL = 1000, 500, 50
 BATCH, STEPS, LR, AUX_W = 128, 12000, 1e-3, 0.05
 LABEL_STEPS, LABEL_RESTARTS, LABEL_LR = 250, 3, 0.05
-POLISH_RESTARTS, POLISH_STEPS = 8, 300
+# На T4 (Colab free) 5x250+100 шагов ~ 5-8 мин (лимит 10 мин);
+# доп. случайные рестарты дают < 0.001 к среднему P(ground) — не стоят риска.
+POLISH_RESTARTS, POLISH_STEPS = 5, 250
 POLISH_FINE_STEPS, POLISH_FINE_LR, POLISH_LR = 100, 0.01, 0.05
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print("device:", DEVICE)
