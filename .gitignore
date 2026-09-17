@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.b64.txt
+*.zip
+*.rar
+data/
+mountains_ckpt/
+колаб/
+решенное/
+.ipynb_checkpoints/
+lotto_*.csv
+lotto.csv
+lotto_seen.txt
+h_test.txt
+angle_law_scan*.csv
+brkdrd_train*.csv
+teacher500.csv
+submission_knn2*.csv
+merged.csv
+merged2 — копия.csv
+lucky.csv
+lotto_bestmean.csv
+_selfcheck_train.csv
+lotto_angles.npz
+results.json
